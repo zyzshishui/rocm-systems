@@ -722,6 +722,7 @@ ncclResult_t ncclTopoPostset(struct ncclComm* comm, int* firstRanks, int* treePa
   int minNchannels, maxNchannels;
   int duplicateCount = 1;
   int channelMultiplier = 1;
+  bool useRailOptimizedTrees = false;
 #ifdef ENABLE_WARP_SPEED
   int adjustedMaxNchannels = (int)ncclMaxNchannels(); // has to add it here to avoid GOTO fail label error
   bool userUpdatedMaxChannels = adjustedMaxNchannels != MAXCHANNELS;
@@ -784,8 +785,16 @@ ncclResult_t ncclTopoPostset(struct ncclComm* comm, int* firstRanks, int* treePa
   // Connect rings and trees. This should also duplicate the channels.
   NCCLCHECK(connectRings(comm, ringRecv, ringSend, ringPrev, ringNext));
 
+  // Rail-optimized trees consume channels in 2 tree directions, with channels paired
+  // inside each direction. That requires the active channel count to be divisible by 4.
+  // Asymmetric topologies can reduce the global channel count below that during postset.
+  useRailOptimizedTrees = comm->topo->useRailOptimizedTrees && comm->nChannels >= 4 && (comm->nChannels % 4) == 0;
+  if (comm->topo->useRailOptimizedTrees && !useRailOptimizedTrees) {
+    INFO(NCCL_GRAPH, "Falling back to generic trees: rail-optimized trees require channel count divisible by 4, got %d", comm->nChannels);
+  }
+
   // [RCCL] Connect rail-optimized trees
-  if (comm->topo->useRailOptimizedTrees) {
+  if (useRailOptimizedTrees) {
     NCCLCHECK(connectRailOptimizedTrees(comm, treeToParent, treeToChild0, treeToChild1));
   } else {
     NCCLCHECK(connectTrees(comm, treeToParent, treeToChild0, treeToChild1, treePatterns));

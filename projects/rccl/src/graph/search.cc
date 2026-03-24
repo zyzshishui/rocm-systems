@@ -12,6 +12,7 @@
 #include "topo.h"
 #include "transport.h"
 #include "xml.h"
+#include <cstdlib>
 #include <math.h>
 #include <sys/time.h>
 #include "rome_models.h"
@@ -1364,6 +1365,36 @@ fail:
   goto exit;
 }
 
+static bool ncclTopoGetBusMatchedLocalNet(struct ncclComm* comm, int rank, int peerRank, int64_t* id, int* dev) {
+  if (peerRank < 0) return false;
+  if (comm->localRanks != 1 || comm->topo->nodes[NET].count <= 1) return false;
+  if (comm->peerInfo[peerRank].hostHash == comm->peerInfo[rank].hostHash) return false;
+
+  int64_t myBusId = comm->peerInfo[rank].busId;
+  int64_t peerBusId = comm->peerInfo[peerRank].busId;
+  int64_t railDelta = -1;
+
+  for (int netIndex = 0; netIndex < comm->topo->nodes[NET].count; netIndex++) {
+    int64_t delta = std::llabs((long long)(comm->topo->nodes[NET].nodes[netIndex].net.busId - myBusId));
+    if (railDelta == -1 || delta < railDelta) railDelta = delta;
+  }
+  if (railDelta <= 0) return false;
+
+  for (int netIndex = 0; netIndex < comm->topo->nodes[NET].count; netIndex++) {
+    struct ncclTopoNode* netNode = comm->topo->nodes[NET].nodes + netIndex;
+    int64_t delta = std::llabs((long long)(netNode->net.busId - peerBusId));
+    if (delta == railDelta) {
+      if (id) *id = netNode->id;
+      if (dev) *dev = netNode->net.dev;
+      INFO(NCCL_NET|NCCL_GRAPH, "Bus-matched NIC selection for rank %d peer %d : local GPU %lx peer GPU %lx -> NET/%d bus %lx",
+           rank, peerRank, myBusId, peerBusId, netNode->net.dev, netNode->net.busId);
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // 0: don't use PXN for P2P, 1: use PXN if needed, 2: use PXN as much as possible to maximize aggregation
 NCCL_PARAM(P2pPxnLevel, "P2P_PXN_LEVEL", 2);
 
@@ -1380,7 +1411,9 @@ ncclResult_t ncclTopoGetNetDev(struct ncclComm* comm, int rank, struct ncclTopoG
     } else {
       NCCLCHECK(getNvlsNetDev(comm, graph, channelId, &netId));
     }
-    NCCLCHECK(ncclTopoIdToNetDev(comm->topo, netId, &netDev));
+    if (!ncclTopoGetBusMatchedLocalNet(comm, rank, peerRank, &netId, &netDev)) {
+      NCCLCHECK(ncclTopoIdToNetDev(comm->topo, netId, &netDev));
+    }
     if (dev) *dev = netDev;
     if (id) *id = netId;
     NCCLCHECK(ncclTopoGetIntermediateRank(comm->topo, rank, netId, proxyRank));
@@ -1389,6 +1422,12 @@ ncclResult_t ncclTopoGetNetDev(struct ncclComm* comm, int rank, struct ncclTopoG
   } else {
     // Start with our local NIC and local Rank
     NCCLCHECK(ncclTopoGetLocalNet(comm->topo, rank, channelId, &netId, &netDev));
+    if (ncclTopoGetBusMatchedLocalNet(comm, rank, peerRank, &netId, &netDev)) {
+      if (dev) *dev = netDev;
+      if (id) *id = netId;
+      *proxyRank = rank;
+      return ncclSuccess;
+    }
     if (dev) *dev = netDev;
     if (id) *id = netId;
     *proxyRank = rank;

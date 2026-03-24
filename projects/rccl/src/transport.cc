@@ -311,12 +311,13 @@ ncclResult_t ncclTransportP2pSetup(struct ncclComm* comm, struct ncclTopoGraph* 
 
     for (int j = 0; j < MAXCHANNELS/64; j++) {
     if (recvPeer != sendPeer) {
-      if (comm->connectSend[sendPeer].masks[j] != 0UL) NCCLCHECKGOTO(bootstrapSend(comm->bootstrap, sendPeer, bootstrapTag, NULL, 0), ret, fail);
-      if (comm->connectRecv[recvPeer].masks[j] != 0UL) NCCLCHECKGOTO(bootstrapSend(comm->bootstrap, recvPeer, bootstrapTag, NULL, 0), ret, fail);
-      if (comm->connectSend[sendPeer].masks[j] != 0UL) NCCLCHECKGOTO(bootstrapRecv(comm->bootstrap, sendPeer, bootstrapTag, NULL, 0), ret, fail);
-      if (comm->connectRecv[recvPeer].masks[j] != 0UL) NCCLCHECKGOTO(bootstrapRecv(comm->bootstrap, recvPeer, bootstrapTag, NULL, 0), ret, fail);
+      if (comm->connectSend[sendPeer+CHANNEL_MASK_OFFSET(comm->nRanks, connIndex)].masks[j] != 0UL) NCCLCHECKGOTO(bootstrapSend(comm->bootstrap, sendPeer, bootstrapTag, NULL, 0), ret, fail);
+      if (comm->connectRecv[recvPeer+CHANNEL_MASK_OFFSET(comm->nRanks, connIndex)].masks[j] != 0UL) NCCLCHECKGOTO(bootstrapSend(comm->bootstrap, recvPeer, bootstrapTag, NULL, 0), ret, fail);
+      if (comm->connectSend[sendPeer+CHANNEL_MASK_OFFSET(comm->nRanks, connIndex)].masks[j] != 0UL) NCCLCHECKGOTO(bootstrapRecv(comm->bootstrap, sendPeer, bootstrapTag, NULL, 0), ret, fail);
+      if (comm->connectRecv[recvPeer+CHANNEL_MASK_OFFSET(comm->nRanks, connIndex)].masks[j] != 0UL) NCCLCHECKGOTO(bootstrapRecv(comm->bootstrap, recvPeer, bootstrapTag, NULL, 0), ret, fail);
     } else {
-      if (comm->connectSend[sendPeer].masks[j] != 0UL || comm->connectRecv[recvPeer].masks[j] != 0UL) {
+      if (comm->connectSend[sendPeer+CHANNEL_MASK_OFFSET(comm->nRanks, connIndex)].masks[j] != 0UL ||
+          comm->connectRecv[recvPeer+CHANNEL_MASK_OFFSET(comm->nRanks, connIndex)].masks[j] != 0UL) {
         NCCLCHECKGOTO(bootstrapSend(comm->bootstrap, sendPeer, bootstrapTag, NULL, 0), ret, fail);
         NCCLCHECKGOTO(bootstrapRecv(comm->bootstrap, sendPeer, bootstrapTag, NULL, 0), ret, fail);
       }
