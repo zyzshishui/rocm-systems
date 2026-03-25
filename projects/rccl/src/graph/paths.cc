@@ -639,7 +639,7 @@ ncclResult_t ncclTopoGetPxnRanks(struct ncclComm* comm, int** intermediateRanks,
   for (int rank=0; rank<comm->nRanks; rank++) {
     int64_t netId;
     int proxyRank;
-    NCCLCHECK(ncclTopoGetNetDev(comm, comm->rank, NULL, 0, rank, &netId, NULL, &proxyRank));
+    NCCLCHECK(ncclTopoGetNetDev(comm, comm->rank, NULL, 0, rank, 1, &netId, NULL, &proxyRank));
     if (proxyRank == comm->rank) continue;
     enum ncclTopoGdrMode useGdr;
     NCCLCHECK(ncclTopoCheckGdr(comm->topo, comm->rank, netId, 1, &useGdr));
