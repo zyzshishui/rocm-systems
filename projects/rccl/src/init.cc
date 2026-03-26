@@ -1034,6 +1034,7 @@ static ncclResult_t fillInfo(struct ncclComm* comm, struct ncclPeerInfo* info, u
   info->rank = comm->rank;
   info->cudaDev = comm->cudaDev;
   info->nvmlDev = comm->nvmlDev;
+  info->rail = -1;
   NCCLCHECK(ncclGetVersion(&info->version));
   info->hostHash=getHostHash()+commHash;
   info->pidHash=getPidHash()+commHash;
@@ -1271,6 +1272,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
     int cpuArch;
     int cpuVendor;
     int localRanks;
+    int rail;
     int nc;
     bool pivotA2AEnabled;
     bool ll128Enabled;
@@ -1639,6 +1641,8 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
 
   allGather3Data[rank].cpuArch = comm->cpuArch;
   allGather3Data[rank].cpuVendor = comm->cpuVendor;
+  NCCLCHECKGOTO(ncclTopoGetGpuRail(comm->topo, comm->rank, &allGather3Data[rank].rail), ret, fail);
+  comm->peerInfo[rank].rail = allGather3Data[rank].rail;
 
   comm->nChannels = std::min(treeGraph->nChannels, ringGraph->nChannels);
 
@@ -1734,6 +1738,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   nc = allGather3Data[0].nc;
   for (int i=0; i<nranks; i++) {
     allTopoRanks[i] = &allGather3Data[i].topoRanks;
+    comm->peerInfo[i].rail = allGather3Data[i].rail;
     nc = std::min(allGather3Data[i].nc, nc);
     // Make sure we align all ranks so that the tuning is consistent across ranks
     comm->topo->pivotA2AEnabled = comm->topo->pivotA2AEnabled && allGather3Data[i].pivotA2AEnabled;

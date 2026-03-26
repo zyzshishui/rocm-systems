@@ -128,6 +128,7 @@ ncclResult_t ncclTopoCreateNode(struct ncclTopoSystem* system, struct ncclTopoNo
   if (type == GPU) {
     n->gpu.dev = NCCL_TOPO_UNDEF;
     n->gpu.rank = NCCL_TOPO_UNDEF;
+    n->gpu.rail = NCCL_TOPO_UNDEF;
     n->gpu.cudaCompCap = NCCL_TOPO_UNDEF;
   } else if (type == CPU) {
     n->cpu.arch = NCCL_TOPO_UNDEF;
@@ -138,6 +139,8 @@ ncclResult_t ncclTopoCreateNode(struct ncclTopoSystem* system, struct ncclTopoNo
     n->net.port = NCCL_TOPO_UNDEF;
     n->net.bw = 0.0;
     n->net.latency = 0.0;
+    n->net.localGpu = NCCL_TOPO_UNDEF;
+    n->net.rail = NCCL_TOPO_UNDEF;
   }
   *node = n;
   return ncclSuccess;
@@ -1745,6 +1748,31 @@ ncclResult_t ncclTopoGetLocalNet(struct ncclTopoSystem* system, int rank, int ch
   return ncclSuccess;
 }
 
+ncclResult_t ncclTopoGetLocalNetByRail(struct ncclTopoSystem* system, int rank, int channelId, int rail, int64_t* id, int* dev) {
+  int gpu;
+  NCCLCHECK(ncclTopoRankToIndex(system, rank, &gpu, /*showWarn=*/true));
+
+  int localNets[NCCL_TOPO_MAX_NODES];
+  int localNetCount;
+  NCCLCHECK(ncclTopoGetLocal(system, GPU, gpu, NET, localNets, &localNetCount, NULL));
+  if (localNetCount == 0) return ncclInternalError;
+
+  int railLocalNets[NCCL_TOPO_MAX_NODES];
+  int railLocalNetCount = 0;
+  for (int i = 0; i < localNetCount; i++) {
+    int netIndex = localNets[i];
+    if (system->nodes[NET].nodes[netIndex].net.rail == rail) railLocalNets[railLocalNetCount++] = netIndex;
+  }
+  if (railLocalNetCount == 0) return ncclInternalError;
+
+  int net = system->nodes[GPU].nodes[gpu].gpu.dev;
+  if (isPow2(railLocalNetCount)) net = mirrorBits(net, railLocalNetCount);
+  net += channelId % railLocalNetCount;
+  if (id) *id = system->nodes[NET].nodes[railLocalNets[net%railLocalNetCount]].id;
+  if (dev) *dev = system->nodes[NET].nodes[railLocalNets[net%railLocalNetCount]].net.dev;
+  return ncclSuccess;
+}
+
 ncclResult_t ncclTopoGetLocalGpu(struct ncclTopoSystem* system, int64_t netId, int* gpuIndex) {
   ncclResult_t ret = ncclSuccess;
   int netIndex;
@@ -1770,6 +1798,20 @@ ncclResult_t ncclTopoGetLocalGpu(struct ncclTopoSystem* system, int64_t netId, i
 exit:
   *gpuIndex = foundGpu;
   return ret;
+}
+
+ncclResult_t ncclTopoGetGpuRail(struct ncclTopoSystem* system, int rank, int* rail) {
+  int gpu;
+  NCCLCHECK(ncclTopoRankToIndex(system, rank, &gpu, /*showWarn=*/true));
+  *rail = system->nodes[GPU].nodes[gpu].gpu.rail;
+  return ncclSuccess;
+}
+
+ncclResult_t ncclTopoGetNetRail(struct ncclTopoSystem* system, int64_t netId, int* rail) {
+  int netIndex;
+  NCCLCHECK(ncclTopoIdToIndex(system, NET, netId, &netIndex));
+  *rail = system->nodes[NET].nodes[netIndex].net.rail;
+  return ncclSuccess;
 }
 
 /****************************/

@@ -446,26 +446,23 @@ static inline int getHandleForAddressRangeFlags(ncclTopoGdrMode useGdr) {
   return flags;
 }
 
-static int ncclNetCountHostRanks(struct ncclComm* comm, uint64_t hostHash) {
-  int count = 0;
-  for (int r = 0; r < comm->nRanks; r++) {
-    if (comm->peerInfo[r].hostHash == hostHash) count++;
-  }
-  return count;
-}
-
 static bool ncclNetForceNonGdrOnBorrowedPeerRail(struct ncclComm* comm, struct ncclPeerInfo* myInfo,
     struct ncclPeerInfo* peerInfo, int channelId, int64_t selectedNetId) {
   if (comm->topo->nodes[NET].count <= 1) return false;
   if (comm->localRanks <= 1) return false;
   if (peerInfo->hostHash == myInfo->hostHash) return false;
 
-  int peerLocalRanks = ncclNetCountHostRanks(comm, peerInfo->hostHash);
+  int peerLocalRanks = ncclCommCountHostRanks(comm, peerInfo->hostHash);
   if (peerLocalRanks <= comm->localRanks) return false;
 
   int64_t localNetId;
   if (ncclTopoGetLocalNet(comm->topo, myInfo->rank, channelId, &localNetId, NULL) != ncclSuccess) return false;
-  return localNetId != selectedNetId;
+  if (localNetId == selectedNetId) return false;
+
+  int localRail = NCCL_TOPO_UNDEF, selectedRail = NCCL_TOPO_UNDEF;
+  if (ncclTopoGetNetRail(comm->topo, localNetId, &localRail) != ncclSuccess) return localNetId != selectedNetId;
+  if (ncclTopoGetNetRail(comm->topo, selectedNetId, &selectedRail) != ncclSuccess) return localNetId != selectedNetId;
+  return localRail != selectedRail;
 }
 
 /* Determine if we will use this transport for this peer and return connect

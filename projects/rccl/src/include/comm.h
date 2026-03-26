@@ -459,6 +459,7 @@ struct ncclPeerInfo {
   int rank;
   int cudaDev;
   int nvmlDev;
+  int rail;
   int gdrSupport;
   bool hasFineGrain;
   uint64_t hostHash;
@@ -787,6 +788,14 @@ struct ncclComm {
 
 static_assert(offsetof(struct ncclComm, startMagic) == 0, "startMagic must be the first field of ncclComm");
 static_assert(offsetof(struct ncclComm, endMagic) == sizeof(struct ncclComm) - sizeof(uint64_t), "endMagic must be the last field of ncclComm");
+
+static inline int ncclCommCountHostRanks(struct ncclComm* comm, uint64_t hostHash) {
+  int count = 0;
+  for (int r = 0; r < comm->nRanks; r++) {
+    if (comm->peerInfo[r].hostHash == hostHash) count++;
+  }
+  return count;
+}
 
 enum ncclLaunchMode {
   ncclLaunchModeInvalid=0,

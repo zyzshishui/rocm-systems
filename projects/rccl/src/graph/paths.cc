@@ -682,6 +682,58 @@ static bool rcclPathOverride(struct ncclTopoSystem* system, uint64_t distance) {
   }
 }
 
+static ncclResult_t ncclTopoComputeRails(struct ncclTopoSystem* system) {
+  int nextRail = 0;
+
+  for (int g = 0; g < system->nodes[GPU].count; g++) {
+    system->nodes[GPU].nodes[g].gpu.rail = NCCL_TOPO_UNDEF;
+  }
+  for (int n = 0; n < system->nodes[NET].count; n++) {
+    system->nodes[NET].nodes[n].net.rail = NCCL_TOPO_UNDEF;
+  }
+
+  for (int n = 0; n < system->nodes[NET].count; n++) {
+    struct ncclTopoNode* net = system->nodes[NET].nodes + n;
+    if (net->net.localGpu == NCCL_TOPO_UNDEF) continue;
+    int* gpuRail = &system->nodes[GPU].nodes[net->net.localGpu].gpu.rail;
+    if (*gpuRail == NCCL_TOPO_UNDEF) *gpuRail = nextRail++;
+    net->net.rail = *gpuRail;
+  }
+
+  for (int g = 0; g < system->nodes[GPU].count; g++) {
+    struct ncclTopoNode* gpu = system->nodes[GPU].nodes + g;
+    if (gpu->gpu.rail != NCCL_TOPO_UNDEF) continue;
+
+    int64_t localNetId;
+    if (ncclTopoGetLocalNet(system, gpu->gpu.rank, 0, &localNetId, NULL) != ncclSuccess) continue;
+
+    int netIndex;
+    NCCLCHECK(ncclTopoIdToIndex(system, NET, localNetId, &netIndex));
+    int* netRail = &system->nodes[NET].nodes[netIndex].net.rail;
+    if (*netRail == NCCL_TOPO_UNDEF) *netRail = nextRail++;
+    gpu->gpu.rail = *netRail;
+  }
+
+  for (int n = 0; n < system->nodes[NET].count; n++) {
+    struct ncclTopoNode* net = system->nodes[NET].nodes + n;
+    if (net->net.rail != NCCL_TOPO_UNDEF) continue;
+
+    int localGpus[NCCL_TOPO_MAX_NODES];
+    int localGpuCount;
+    NCCLCHECK(ncclTopoGetLocal(system, NET, n, GPU, localGpus, &localGpuCount, NULL));
+    for (int i = 0; i < localGpuCount; i++) {
+      int rail = system->nodes[GPU].nodes[localGpus[i]].gpu.rail;
+      if (rail != NCCL_TOPO_UNDEF) {
+        net->net.rail = rail;
+        break;
+      }
+    }
+    if (net->net.rail == NCCL_TOPO_UNDEF) net->net.rail = nextRail++;
+  }
+
+  return ncclSuccess;
+}
+
 NCCL_PARAM(PxnC2c, "PXN_C2C", 0);
 
 ncclResult_t ncclTopoComputePaths(struct ncclTopoSystem* system, struct ncclComm* comm) {
@@ -826,6 +878,7 @@ ncclResult_t ncclTopoComputePaths(struct ncclTopoSystem* system, struct ncclComm
     struct ncclTopoNode* net = system->nodes[NET].nodes+n;
     NCCLCHECK(ncclTopoGetLocalGpu(system, net->id, &net->net.localGpu));
   }
+  NCCLCHECK(ncclTopoComputeRails(system));
   return ncclSuccess;
 }
 

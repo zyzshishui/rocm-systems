@@ -150,6 +150,7 @@ struct ncclTopoNode {
     struct {
       int dev; // NVML dev number
       int rank;
+      int rail;
       int cudaCompCap;
       int gdrSupport;
       char gcn[GCN_ARCH_NAME_LEN];
@@ -166,6 +167,7 @@ struct ncclTopoNode {
       int collSupport;
       int maxChannels;
       int localGpu;
+      int rail;
       int64_t busId;
     }net;
     struct {
@@ -257,6 +259,9 @@ ncclResult_t ncclTopoGetGraphFromXml(struct ncclXmlNode *xmlGraphs, struct ncclT
 ncclResult_t ncclTopoGetXmlFromGraphs(int ngraphs, struct ncclTopoGraph** graphs, struct ncclTopoSystem* system, struct ncclXml *xml);
 
 ncclResult_t ncclTopoGetCompCap(struct ncclTopoSystem* system, int* ccMin, int* ccMax);
+ncclResult_t ncclTopoGetGpuRail(struct ncclTopoSystem* system, int rank, int* rail);
+ncclResult_t ncclTopoGetNetRail(struct ncclTopoSystem* system, int64_t netId, int* rail);
+ncclResult_t ncclTopoGetLocalNetByRail(struct ncclTopoSystem* system, int rank, int channelId, int rail, int64_t* id, int* dev);
 
 void rcclApplyTuningOverrides(struct ncclTopoSystem* system);
 

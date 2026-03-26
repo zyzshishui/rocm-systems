@@ -80,7 +80,10 @@ ncclResult_t ncclTopoGetGpuCount(struct ncclTopoSystem* system, int* count);
 ncclResult_t ncclTopoGetNetCount(struct ncclTopoSystem* system, int* count);
 ncclResult_t ncclTopoGetNvsCount(struct ncclTopoSystem* system, int* count);
 ncclResult_t ncclTopoGetLocalNet(struct ncclTopoSystem* system, int rank, int channelId, int64_t* id, int* dev);
+ncclResult_t ncclTopoGetLocalNetByRail(struct ncclTopoSystem* system, int rank, int channelId, int rail, int64_t* id, int* dev);
 ncclResult_t ncclTopoGetLocalGpu(struct ncclTopoSystem* system, int64_t netId, int* gpuIndex);
+ncclResult_t ncclTopoGetGpuRail(struct ncclTopoSystem* system, int rank, int* rail);
+ncclResult_t ncclTopoGetNetRail(struct ncclTopoSystem* system, int64_t netId, int* rail);
 ncclResult_t getLocalNetCountByBw(struct ncclTopoSystem* system, int gpu, int *count);
 
 // Allows for up to 32 NICs per node on GB200-NVL72
