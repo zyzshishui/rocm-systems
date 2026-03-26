@@ -1278,9 +1278,14 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
     bool ll128Enabled;
     bool mscclEnabled;
   };
+  struct p2pChannelInfo {
+    int nChannels;
+    int nChannelsPerPeer;
+  };
 
   int nChannelsOrig;
   struct allGatherInfo *allGather3Data = NULL;
+  struct p2pChannelInfo* allP2pChannels = NULL;
   struct ncclTopoRanks** allTopoRanks = NULL;
   int *nodesFirstRank = NULL, *nodesTreePatterns = NULL;
   int *rings = NULL;
@@ -1804,6 +1809,19 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
 
   // Compute nChannels per peer for p2p
   NCCLCHECKGOTO(ncclTopoComputeP2pChannels(comm), ret, fail);
+  // Send/recv collectives require a globally consistent p2p fanout. Under
+  // asymmetric placements (for example 1+8), local derivation can differ.
+  NCCLCHECKGOTO(ncclCalloc(&allP2pChannels, nranks), ret, fail);
+  allP2pChannels[rank].nChannels = comm->p2pnChannels;
+  allP2pChannels[rank].nChannelsPerPeer = comm->p2pnChannelsPerPeer;
+  NCCLCHECKGOTO(bootstrapAllGather(comm->bootstrap, allP2pChannels, sizeof(*allP2pChannels)), ret, fail);
+  for (int i = 0; i < nranks; i++) {
+    comm->p2pnChannels = std::min(comm->p2pnChannels, allP2pChannels[i].nChannels);
+    comm->p2pnChannelsPerPeer = std::min(comm->p2pnChannelsPerPeer, allP2pChannels[i].nChannelsPerPeer);
+  }
+  comm->p2pnChannelsPerPeer = std::min(comm->p2pnChannelsPerPeer, comm->p2pnChannels);
+  free(allP2pChannels);
+  allP2pChannels = NULL;
   // RCCL: Determine and set P2P channel shift size for comm
   NCCLCHECK(rcclCommSetP2pShiftSize(comm));
   /* until now, all info of comm should be known. We can initialize shared resources and
@@ -2043,6 +2061,7 @@ exit:
    * attach the proxy ops pool of parent at any time; otherwise, unlink it here to make sure the pool will be
    * properly cleaned up. */
   if (comm->sharedRes->owner == comm && !comm->shareResources && ret == ncclSuccess && !ncclCuMemEnable()) ncclProxyShmUnlink(comm);
+  free(allP2pChannels);
   free(allTopoRanks);
   free(nodesTreePatterns);
   free(nodesFirstRank);
