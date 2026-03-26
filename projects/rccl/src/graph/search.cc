@@ -12,7 +12,7 @@
 #include "topo.h"
 #include "transport.h"
 #include "xml.h"
-#include <cstdlib>
+#include <algorithm>
 #include <math.h>
 #include <sys/time.h>
 #include "rome_models.h"
