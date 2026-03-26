@@ -1752,16 +1752,24 @@ ncclResult_t ncclTopoGetLocalNetByRail(struct ncclTopoSystem* system, int rank, 
   int gpu;
   NCCLCHECK(ncclTopoRankToIndex(system, rank, &gpu, /*showWarn=*/true));
 
-  int localNets[NCCL_TOPO_MAX_NODES];
-  int localNetCount;
-  NCCLCHECK(ncclTopoGetLocal(system, GPU, gpu, NET, localNets, &localNetCount, NULL));
-  if (localNetCount == 0) return ncclInternalError;
-
   int railLocalNets[NCCL_TOPO_MAX_NODES];
   int railLocalNetCount = 0;
-  for (int i = 0; i < localNetCount; i++) {
-    int netIndex = localNets[i];
-    if (system->nodes[NET].nodes[netIndex].net.rail == rail) railLocalNets[railLocalNetCount++] = netIndex;
+  float bestBw = 0.0;
+  int bestType = PATH_DIS;
+  struct ncclTopoLinkList* netPaths = system->nodes[GPU].nodes[gpu].paths[NET];
+  for (int netIndex = 0; netIndex < system->nodes[NET].count; netIndex++) {
+    if (system->nodes[NET].nodes[netIndex].net.rail != rail) continue;
+    struct ncclTopoLinkList* path = netPaths + netIndex;
+    if (path->count == 0 || path->type == PATH_DIS) continue;
+
+    if (path->bw > bestBw || (path->bw == bestBw && path->type < bestType)) {
+      bestBw = path->bw;
+      bestType = path->type;
+      railLocalNetCount = 0;
+    }
+    if (path->bw == bestBw && path->type == bestType) {
+      railLocalNets[railLocalNetCount++] = netIndex;
+    }
   }
   if (railLocalNetCount == 0) return ncclInternalError;
 

@@ -639,7 +639,7 @@ ncclResult_t ncclTopoGetPxnRanks(struct ncclComm* comm, int** intermediateRanks,
   for (int rank=0; rank<comm->nRanks; rank++) {
     int64_t netId;
     int proxyRank;
-    NCCLCHECK(ncclTopoGetNetDev(comm, comm->rank, NULL, 0, rank, 1, &netId, NULL, &proxyRank));
+    NCCLCHECK(ncclTopoGetNetDev(comm, comm->rank, NULL, 0, rank, 1, &netId, NULL, NULL, &proxyRank));
     if (proxyRank == comm->rank) continue;
     enum ncclTopoGdrMode useGdr;
     NCCLCHECK(ncclTopoCheckGdr(comm->topo, comm->rank, netId, 1, &useGdr));
@@ -682,53 +682,110 @@ static bool rcclPathOverride(struct ncclTopoSystem* system, uint64_t distance) {
   }
 }
 
+static ncclResult_t ncclTopoGetRailAnchorIdRec(struct ncclTopoNode* node, struct ncclTopoNode* from, int64_t* anchorId) {
+  if (node->type == PCI) {
+    for (int l = 0; l < node->nlinks; l++) {
+      struct ncclTopoLink* link = node->links + l;
+      if (link->remNode == from) continue;
+      if (link->type == LINK_PCI && link->remNode->type == CPU) {
+        *anchorId = NCCL_TOPO_ID_LOCAL_ID(node->id);
+        return ncclSuccess;
+      }
+    }
+  }
+
+  for (int l = 0; l < node->nlinks; l++) {
+    struct ncclTopoLink* link = node->links + l;
+    if (link->remNode == from) continue;
+
+    bool traverse = link->type == LINK_PCI;
+    if (node->type == NET && link->type == LINK_NET) traverse = true;
+    if (!traverse) continue;
+
+    if (ncclTopoGetRailAnchorIdRec(link->remNode, node, anchorId) == ncclSuccess) return ncclSuccess;
+  }
+  return ncclInternalError;
+}
+
+static ncclResult_t ncclTopoGetRailAnchorId(struct ncclTopoNode* node, int64_t* anchorId) {
+  if (ncclTopoGetRailAnchorIdRec(node, NULL, anchorId) == ncclSuccess) return ncclSuccess;
+
+  if (node->type == GPU) {
+    *anchorId = NCCL_TOPO_ID_LOCAL_ID(node->id);
+    return ncclSuccess;
+  }
+  if (node->type == NET) {
+    *anchorId = node->net.busId;
+    return ncclSuccess;
+  }
+  return ncclInternalError;
+}
+
+static ncclResult_t ncclTopoAddRailAnchor(int64_t* railAnchorIds, int maxRailAnchors, int* railCount, int64_t railAnchorId) {
+  int pos = 0;
+  while (pos < *railCount && railAnchorIds[pos] < railAnchorId) pos++;
+  if (pos < *railCount && railAnchorIds[pos] == railAnchorId) return ncclSuccess;
+  if (*railCount == maxRailAnchors) {
+    WARN("Too many rail anchors while computing topology rails (%d)", maxRailAnchors);
+    return ncclInternalError;
+  }
+  memmove(railAnchorIds + pos + 1, railAnchorIds + pos, (*railCount - pos) * sizeof(int64_t));
+  railAnchorIds[pos] = railAnchorId;
+  (*railCount)++;
+  return ncclSuccess;
+}
+
+static int ncclTopoFindRailIndex(const int64_t* railAnchorIds, int railCount, int64_t railAnchorId) {
+  for (int i = 0; i < railCount; i++) {
+    if (railAnchorIds[i] == railAnchorId) return i;
+  }
+  return NCCL_TOPO_UNDEF;
+}
+
 static ncclResult_t ncclTopoComputeRails(struct ncclTopoSystem* system) {
-  int nextRail = 0;
+  const int maxRailAnchors = NCCL_TOPO_MAX_NODES * 2;
+  int64_t railAnchorIds[NCCL_TOPO_MAX_NODES * 2];
+  int64_t gpuRailAnchorIds[NCCL_TOPO_MAX_NODES];
+  int64_t netRailAnchorIds[NCCL_TOPO_MAX_NODES];
+  int railCount = 0;
 
   for (int g = 0; g < system->nodes[GPU].count; g++) {
     system->nodes[GPU].nodes[g].gpu.rail = NCCL_TOPO_UNDEF;
+    gpuRailAnchorIds[g] = 0;
   }
   for (int n = 0; n < system->nodes[NET].count; n++) {
     system->nodes[NET].nodes[n].net.rail = NCCL_TOPO_UNDEF;
-  }
-
-  for (int n = 0; n < system->nodes[NET].count; n++) {
-    struct ncclTopoNode* net = system->nodes[NET].nodes + n;
-    if (net->net.localGpu == NCCL_TOPO_UNDEF) continue;
-    int* gpuRail = &system->nodes[GPU].nodes[net->net.localGpu].gpu.rail;
-    if (*gpuRail == NCCL_TOPO_UNDEF) *gpuRail = nextRail++;
-    net->net.rail = *gpuRail;
+    netRailAnchorIds[n] = 0;
   }
 
   for (int g = 0; g < system->nodes[GPU].count; g++) {
     struct ncclTopoNode* gpu = system->nodes[GPU].nodes + g;
-    if (gpu->gpu.rail != NCCL_TOPO_UNDEF) continue;
-
-    int64_t localNetId;
-    if (ncclTopoGetLocalNet(system, gpu->gpu.rank, 0, &localNetId, NULL) != ncclSuccess) continue;
-
-    int netIndex;
-    NCCLCHECK(ncclTopoIdToIndex(system, NET, localNetId, &netIndex));
-    int* netRail = &system->nodes[NET].nodes[netIndex].net.rail;
-    if (*netRail == NCCL_TOPO_UNDEF) *netRail = nextRail++;
-    gpu->gpu.rail = *netRail;
+    NCCLCHECK(ncclTopoGetRailAnchorId(gpu, gpuRailAnchorIds + g));
+    NCCLCHECK(ncclTopoAddRailAnchor(railAnchorIds, maxRailAnchors, &railCount, gpuRailAnchorIds[g]));
   }
 
   for (int n = 0; n < system->nodes[NET].count; n++) {
     struct ncclTopoNode* net = system->nodes[NET].nodes + n;
-    if (net->net.rail != NCCL_TOPO_UNDEF) continue;
+    NCCLCHECK(ncclTopoGetRailAnchorId(net, netRailAnchorIds + n));
+    NCCLCHECK(ncclTopoAddRailAnchor(railAnchorIds, maxRailAnchors, &railCount, netRailAnchorIds[n]));
+  }
 
-    int localGpus[NCCL_TOPO_MAX_NODES];
-    int localGpuCount;
-    NCCLCHECK(ncclTopoGetLocal(system, NET, n, GPU, localGpus, &localGpuCount, NULL));
-    for (int i = 0; i < localGpuCount; i++) {
-      int rail = system->nodes[GPU].nodes[localGpus[i]].gpu.rail;
-      if (rail != NCCL_TOPO_UNDEF) {
-        net->net.rail = rail;
-        break;
-      }
+  for (int g = 0; g < system->nodes[GPU].count; g++) {
+    struct ncclTopoNode* gpu = system->nodes[GPU].nodes + g;
+    gpu->gpu.rail = ncclTopoFindRailIndex(railAnchorIds, railCount, gpuRailAnchorIds[g]);
+    if (gpu->gpu.rail == NCCL_TOPO_UNDEF) {
+      WARN("Could not assign rail to GPU rank %d busId %lx", gpu->gpu.rank, NCCL_TOPO_ID_LOCAL_ID(gpu->id));
+      return ncclInternalError;
     }
-    if (net->net.rail == NCCL_TOPO_UNDEF) net->net.rail = nextRail++;
+  }
+
+  for (int n = 0; n < system->nodes[NET].count; n++) {
+    struct ncclTopoNode* net = system->nodes[NET].nodes + n;
+    net->net.rail = ncclTopoFindRailIndex(railAnchorIds, railCount, netRailAnchorIds[n]);
+    if (net->net.rail == NCCL_TOPO_UNDEF) {
+      WARN("Could not assign rail to NET dev %d busId %lx", net->net.dev, net->net.busId);
+      return ncclInternalError;
+    }
   }
 
   return ncclSuccess;

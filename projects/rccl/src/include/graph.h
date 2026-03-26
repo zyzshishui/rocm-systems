@@ -34,7 +34,7 @@ ncclResult_t ncclTopoPathAllNVLink(struct ncclTopoSystem* system, int* allNvLink
 ncclResult_t ncclTopoComputeCommCPU(struct ncclComm* comm);
 
 // Query topology
-ncclResult_t ncclTopoGetNetDev(struct ncclComm* comm, int rank, struct ncclTopoGraph* graph, int channelId, int peerRank, int read, int64_t* id, int* dev, int* proxyRank);
+ncclResult_t ncclTopoGetNetDev(struct ncclComm* comm, int rank, struct ncclTopoGraph* graph, int channelId, int peerRank, int read, int64_t* id, int* dev, int* netFlags, int* proxyRank);
 ncclResult_t ncclTopoCheckP2p(struct ncclComm* comm, struct ncclTopoSystem* system, int rank1, int rank2, int* p2p, int *read, int* intermediateRank);
 ncclResult_t ncclTopoCheckMNNVL(struct ncclTopoSystem* system, struct ncclPeerInfo* info1, struct ncclPeerInfo* info2, int* ret);
 enum ncclTopoGdrMode {
@@ -42,6 +42,11 @@ enum ncclTopoGdrMode {
   ncclTopoGdrModeDefault = 1,
   ncclTopoGdrModePci = 2,
   ncclTopoGdrModeNum = 3
+};
+enum ncclTopoNetDevFlags {
+  NCCL_TOPO_NET_DEV_NONE = 0,
+  NCCL_TOPO_NET_DEV_UNEVEN_PEER_RAIL = 1 << 0,
+  NCCL_TOPO_NET_DEV_FORCE_NON_GDR = 1 << 1
 };
 ncclResult_t ncclTopoCheckGdr(struct ncclTopoSystem* topo, int rank, int64_t netId, int read, enum ncclTopoGdrMode* gdrMode);
 ncclResult_t ncclTopoNeedFlush(struct ncclComm* comm, int64_t netId, int netDev, int rank, bool netManaged, int* flush);
