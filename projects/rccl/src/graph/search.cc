@@ -1365,7 +1365,7 @@ fail:
   goto exit;
 }
 
-static bool ncclTopoGetUnevenPeerHostPlacement(struct ncclComm* comm, int rank, int peerRank, bool* smallerSide) {
+static bool ncclTopoGetAsymmetricPeerHostPlacement(struct ncclComm* comm, int rank, int peerRank, bool* smallerSide) {
   if (peerRank < 0) return false;
   if (comm->topo->nodes[NET].count <= 1) return false;
   if (comm->peerInfo[peerRank].hostHash == comm->peerInfo[rank].hostHash) return false;
@@ -1377,7 +1377,7 @@ static bool ncclTopoGetUnevenPeerHostPlacement(struct ncclComm* comm, int rank, 
 
 static bool ncclTopoGetPeerMatchedRailNet(struct ncclComm* comm, int rank, int peerRank, int channelId, int read, bool requireGdr, int64_t* id, int* dev) {
   bool smallerSide;
-  if (!ncclTopoGetUnevenPeerHostPlacement(comm, rank, peerRank, &smallerSide) || !smallerSide) return false;
+  if (!ncclTopoGetAsymmetricPeerHostPlacement(comm, rank, peerRank, &smallerSide) || !smallerSide) return false;
   int peerRail = comm->peerInfo[peerRank].rail;
   if (peerRail == NCCL_TOPO_UNDEF) return false;
 
@@ -1396,13 +1396,13 @@ static bool ncclTopoGetPeerMatchedRailNet(struct ncclComm* comm, int rank, int p
   return true;
 }
 
-static ncclResult_t ncclTopoMaybeOverrideGraphNetForUnevenPlacement(struct ncclComm* comm, struct ncclTopoGraph* graph,
+static ncclResult_t ncclTopoMaybeOverrideGraphNetForAsymmetricPlacement(struct ncclComm* comm, struct ncclTopoGraph* graph,
     int rank, int peerRank, int channelId, int read, int64_t* id, int* dev, bool* overridden) {
   *overridden = false;
   if (!graph || graph->pattern == NCCL_TOPO_PATTERN_NVLS || peerRank < 0) return ncclSuccess;
 
   bool smallerSide;
-  if (!ncclTopoGetUnevenPeerHostPlacement(comm, rank, peerRank, &smallerSide)) return ncclSuccess;
+  if (!ncclTopoGetAsymmetricPeerHostPlacement(comm, rank, peerRank, &smallerSide)) return ncclSuccess;
 
   int64_t graphNetId = *id;
   int graphRail = NCCL_TOPO_UNDEF;
@@ -1430,16 +1430,16 @@ static ncclResult_t ncclTopoMaybeOverrideGraphNetForUnevenPlacement(struct ncclC
   if (dev) *dev = localNetDev;
   *overridden = true;
   INFO(NCCL_NET|NCCL_GRAPH,
-       "Uneven-placement NIC override for rank %d peer %d read %d channel %d : graph rail %d NET id %lx -> target rail %d local NET/%d id %lx",
+       "Asymmetric-placement NIC override for rank %d peer %d read %d channel %d : graph rail %d NET id %lx -> target rail %d local NET/%d id %lx",
        rank, peerRank, read, channelId, graphRail, graphNetId, targetRail, localNetDev, localNetId);
   return ncclSuccess;
 }
 
-static ncclResult_t ncclTopoGetUnevenPlacementNetFlags(struct ncclComm* comm, int rank, int peerRank, int channelId, int64_t netId, int* flags) {
+static ncclResult_t ncclTopoGetAsymmetricPlacementNetFlags(struct ncclComm* comm, int rank, int peerRank, int channelId, int64_t netId, int* flags) {
   if (flags) *flags = NCCL_TOPO_NET_DEV_NONE;
 
   bool smallerSide;
-  if (!ncclTopoGetUnevenPeerHostPlacement(comm, rank, peerRank, &smallerSide) || !smallerSide) return ncclSuccess;
+  if (!ncclTopoGetAsymmetricPeerHostPlacement(comm, rank, peerRank, &smallerSide) || !smallerSide) return ncclSuccess;
 
   int64_t localNetId;
   NCCLCHECK(ncclTopoGetLocalNet(comm->topo, rank, channelId, &localNetId, NULL));
@@ -1452,7 +1452,7 @@ static ncclResult_t ncclTopoGetUnevenPlacementNetFlags(struct ncclComm* comm, in
   if (localRail == selectedRail) return ncclSuccess;
 
   if (flags) {
-    *flags |= NCCL_TOPO_NET_DEV_UNEVEN_PEER_RAIL;
+    *flags |= NCCL_TOPO_NET_DEV_ASYMMETRIC_PEER_RAIL;
     if (comm->localRanks > 1) *flags |= NCCL_TOPO_NET_DEV_FORCE_NON_GDR;
   }
   return ncclSuccess;
@@ -1476,13 +1476,13 @@ ncclResult_t ncclTopoGetNetDev(struct ncclComm* comm, int rank, struct ncclTopoG
       NCCLCHECK(getNvlsNetDev(comm, graph, channelId, &netId));
     }
     bool asymmetricOverride = false;
-    NCCLCHECK(ncclTopoMaybeOverrideGraphNetForUnevenPlacement(comm, graph, rank, peerRank, channelId, read, &netId, &netDev, &asymmetricOverride));
+    NCCLCHECK(ncclTopoMaybeOverrideGraphNetForAsymmetricPlacement(comm, graph, rank, peerRank, channelId, read, &netId, &netDev, &asymmetricOverride));
     if (!asymmetricOverride) {
       NCCLCHECK(ncclTopoIdToNetDev(comm->topo, netId, &netDev));
     }
     if (dev) *dev = netDev;
     if (id) *id = netId;
-    NCCLCHECK(ncclTopoGetUnevenPlacementNetFlags(comm, rank, peerRank, channelId, netId, &flags));
+    NCCLCHECK(ncclTopoGetAsymmetricPlacementNetFlags(comm, rank, peerRank, channelId, netId, &flags));
     if (netFlags) *netFlags = flags;
     NCCLCHECK(ncclTopoGetIntermediateRank(comm->topo, rank, netId, proxyRank));
   } else if (peerRank == -1) {
@@ -1490,14 +1490,14 @@ ncclResult_t ncclTopoGetNetDev(struct ncclComm* comm, int rank, struct ncclTopoG
   } else {
     // Start with our local NIC and local Rank
     NCCLCHECK(ncclTopoGetLocalNet(comm->topo, rank, channelId, &netId, &netDev));
-    bool pinnedUnevenRail = ncclTopoGetPeerMatchedRailNet(comm, rank, peerRank, channelId, read, false, &netId, &netDev);
+    bool pinnedAsymmetricRail = ncclTopoGetPeerMatchedRailNet(comm, rank, peerRank, channelId, read, false, &netId, &netDev);
     if (dev) *dev = netDev;
     if (id) *id = netId;
     *proxyRank = rank;
 
     int pxnLevel = ncclPxnDisable(comm) == 1 ? 0 : ncclParamP2pPxnLevel();
     // See whether we can use the remote rank preferred device.
-    if (!pinnedUnevenRail && (ncclParamCrossNic() == 0 || (pxnLevel != 0))) {
+    if (!pinnedAsymmetricRail && (ncclParamCrossNic() == 0 || (pxnLevel != 0))) {
       // Find local NIC number close to local nvmlDev
       int nvmlDev = comm->peerInfo[peerRank].nvmlDev;
       int localRank;
@@ -1537,7 +1537,7 @@ ncclResult_t ncclTopoGetNetDev(struct ncclComm* comm, int rank, struct ncclTopoG
         }
       }
     }
-    NCCLCHECK(ncclTopoGetUnevenPlacementNetFlags(comm, rank, peerRank, channelId, netId, &flags));
+    NCCLCHECK(ncclTopoGetAsymmetricPlacementNetFlags(comm, rank, peerRank, channelId, netId, &flags));
     if (netFlags) *netFlags = flags;
   }
   return ncclSuccess;

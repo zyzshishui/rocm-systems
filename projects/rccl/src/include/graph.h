@@ -45,7 +45,7 @@ enum ncclTopoGdrMode {
 };
 enum ncclTopoNetDevFlags {
   NCCL_TOPO_NET_DEV_NONE = 0,
-  NCCL_TOPO_NET_DEV_UNEVEN_PEER_RAIL = 1 << 0,
+  NCCL_TOPO_NET_DEV_ASYMMETRIC_PEER_RAIL = 1 << 0,
   NCCL_TOPO_NET_DEV_FORCE_NON_GDR = 1 << 1
 };
 ncclResult_t ncclTopoCheckGdr(struct ncclTopoSystem* topo, int rank, int64_t netId, int read, enum ncclTopoGdrMode* gdrMode);
