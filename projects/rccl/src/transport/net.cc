@@ -446,6 +446,28 @@ static inline int getHandleForAddressRangeFlags(ncclTopoGdrMode useGdr) {
   return flags;
 }
 
+static int ncclNetCountHostRanks(struct ncclComm* comm, uint64_t hostHash) {
+  int count = 0;
+  for (int r = 0; r < comm->nRanks; r++) {
+    if (comm->peerInfo[r].hostHash == hostHash) count++;
+  }
+  return count;
+}
+
+static bool ncclNetForceNonGdrOnBorrowedPeerRail(struct ncclComm* comm, struct ncclPeerInfo* myInfo,
+    struct ncclPeerInfo* peerInfo, int channelId, int64_t selectedNetId) {
+  if (comm->topo->nodes[NET].count <= 1) return false;
+  if (comm->localRanks <= 1) return false;
+  if (peerInfo->hostHash == myInfo->hostHash) return false;
+
+  int peerLocalRanks = ncclNetCountHostRanks(comm, peerInfo->hostHash);
+  if (peerLocalRanks <= comm->localRanks) return false;
+
+  int64_t localNetId;
+  if (ncclTopoGetLocalNet(comm->topo, myInfo->rank, channelId, &localNetId, NULL) != ncclSuccess) return false;
+  return localNetId != selectedNetId;
+}
+
 /* Determine if we will use this transport for this peer and return connect
 * information for this peer */
 static ncclResult_t sendSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo, struct ncclConnect* connectInfo, struct ncclConnector* send, int channelId, int connIndex) {
@@ -468,6 +490,12 @@ static ncclResult_t sendSetup(struct ncclComm* comm, struct ncclTopoGraph* graph
   if (connIndex == NCCL_CONN_IDX_P2P_NET) NCCLCHECK(ncclTopoGetIntraNetDev(comm->topo, myInfo->rank, graph, channelId, 1, &netId, &req.netDev));
   if (req.netDev < 0) NCCLCHECK(ncclTopoGetNetDev(comm, myInfo->rank, graph, channelId, peerInfo->rank, 1, &netId, &req.netDev, &proxyRank));
   NCCLCHECK(ncclTopoCheckGdr(comm->topo, myInfo->rank, netId, 1, &req.useGdr));
+  if (req.useGdr && ncclNetForceNonGdrOnBorrowedPeerRail(comm, myInfo, peerInfo, channelId, netId)) {
+    INFO(NCCL_NET|NCCL_GRAPH,
+         "Force non-GDR send for rank %d peer %d channel %d on borrowed peer-matched NET id %lx",
+         myInfo->rank, peerInfo->rank, channelId, netId);
+    req.useGdr = ncclTopoGdrModeDisable;
+  }
   send->conn.flags |= req.useGdr ? NCCL_DIRECT_NIC : 0;
   if (!req.useGdr && connIndex == 0) comm->useGdr = 0;
   if (proxyRank != myInfo->rank && connIndex == 0) comm->useNetPXN = true;
@@ -516,6 +544,12 @@ static ncclResult_t recvSetup(struct ncclComm* comm, struct ncclTopoGraph* graph
   if (connIndex == NCCL_CONN_IDX_P2P_NET) NCCLCHECK(ncclTopoGetIntraNetDev(comm->topo, myInfo->rank, graph, channelId, 0, &netId, &req.netDev));
   if (req.netDev < 0) NCCLCHECK(ncclTopoGetNetDev(comm, myInfo->rank, graph, channelId, peerInfo->rank, 0, &netId, &req.netDev, &proxyRank));
   NCCLCHECK(ncclTopoCheckGdr(comm->topo, myInfo->rank, netId, 0, &req.useGdr));
+  if (req.useGdr && ncclNetForceNonGdrOnBorrowedPeerRail(comm, myInfo, peerInfo, channelId, netId)) {
+    INFO(NCCL_NET|NCCL_GRAPH,
+         "Force non-GDR recv for rank %d peer %d channel %d on borrowed peer-matched NET id %lx",
+         myInfo->rank, peerInfo->rank, channelId, netId);
+    req.useGdr = ncclTopoGdrModeDisable;
+  }
   recv->conn.flags |= req.useGdr ? NCCL_DIRECT_NIC : 0;
   if (!req.useGdr && connIndex == 0) comm->useGdr = 0;
 
