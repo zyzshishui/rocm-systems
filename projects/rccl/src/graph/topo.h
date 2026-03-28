@@ -203,6 +203,7 @@ struct ncclTopoSystem {
   int type;
   int nRanks;
   int netGdrLevel;
+  bool forceNoGdrForUnevenMultiRank;
   int tuning;
 
   bool pivotA2AEnabled;

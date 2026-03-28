@@ -414,6 +414,13 @@ NCCL_PARAM(NetGdrC2c, "NET_GDR_C2C", 1);
 ncclResult_t ncclTopoCheckGdr(struct ncclTopoSystem* system, int rank, int64_t netId, int read, enum ncclTopoGdrMode* gdrMode) {
   *gdrMode = ncclTopoGdrModeDisable;
 
+  if (system->forceNoGdrForUnevenMultiRank) {
+    INFO(NCCL_GRAPH|NCCL_NET,
+         "GPU Direct RDMA Disabled for GPU %d / HCA %lx due to uneven multi-rank communicator placement",
+         rank, netId);
+    return ncclSuccess;
+  }
+
   // Get GPU and NET
   int n, g;
   NCCLCHECK(ncclTopoIdToIndex(system, NET, netId, &n));

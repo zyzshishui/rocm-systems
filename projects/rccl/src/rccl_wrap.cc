@@ -59,6 +59,32 @@ static inline bool rcclCollSupportsRing(ncclFunc_t func) {
           func == ncclFuncReduce);
 }
 
+static bool rcclNetGdrExplicitlyDisabled() {
+  static int disableNetGdr = -1;
+  if (disableNetGdr == -1) {
+    const char* levelStr = getenv("NCCL_NET_GDR_LEVEL");
+    disableNetGdr = (levelStr && atoi(levelStr) == 0) ? 1 : 0;
+  }
+  return disableNetGdr;
+}
+
+void rcclMaybePreferTreeForSmallSymmetricRdmaAllReduce(struct ncclComm* comm, size_t const& nBytes, struct ncclTaskColl* info) {
+  if (getenv("NCCL_ALGO") != nullptr) return;
+  if (info->func != ncclFuncAllReduce) return;
+  if (info->algorithm != NCCL_ALGO_RING || info->protocol != NCCL_PROTO_SIMPLE) return;
+  if (comm->nNodes <= 1 || comm->localRanks * comm->nNodes != comm->nRanks) return;
+  if (!IsArchMatch(comm->topo->nodes[GPU].nodes[0].gpu.gcn, "gfx950")) return;
+  if (!rcclNetGdrExplicitlyDisabled()) return;
+
+  size_t bytesPerRank = divUp(nBytes, comm->nRanks);
+  if (bytesPerRank > (1ULL << 20)) return;
+
+  INFO(NCCL_TUNING,
+       "Overriding small symmetric multi-node RDMA AllReduce from RING to TREE for %zu bytes (%zu bytes/rank)",
+       nBytes, bytesPerRank);
+  info->algorithm = NCCL_ALGO_TREE;
+}
+
 int32_t rcclGetProtoForGfx12(ncclFunc_t collectiveFunc, size_t sizePerRank){
   int returnVal = NCCL_PROTO_SIMPLE;
   int SingleNodeLLCutoffs[] = {

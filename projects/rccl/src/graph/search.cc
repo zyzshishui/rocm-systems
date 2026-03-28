@@ -1375,9 +1375,20 @@ static bool ncclTopoGetAsymmetricPeerHostPlacement(struct ncclComm* comm, int ra
   return true;
 }
 
+static bool ncclTopoIsNearBalancedAsymmetricPlacement(struct ncclComm* comm, int rank, int peerRank) {
+  bool smallerSide;
+  if (!ncclTopoGetAsymmetricPeerHostPlacement(comm, rank, peerRank, &smallerSide)) return false;
+  int peerLocalRanks = ncclCommCountHostRanks(comm, comm->peerInfo[peerRank].hostHash);
+  if (peerLocalRanks <= 0) return false;
+  int minHostRanks = std::min(comm->localRanks, peerLocalRanks);
+  int maxHostRanks = std::max(comm->localRanks, peerLocalRanks);
+  return minHostRanks > 1 && maxHostRanks < 2 * minHostRanks;
+}
+
 static bool ncclTopoGetPeerMatchedRailNet(struct ncclComm* comm, int rank, int peerRank, int channelId, int read, bool requireGdr, int64_t* id, int* dev) {
   bool smallerSide;
   if (!ncclTopoGetAsymmetricPeerHostPlacement(comm, rank, peerRank, &smallerSide) || !smallerSide) return false;
+  if (comm->localRanks > 1 && ncclTopoIsNearBalancedAsymmetricPlacement(comm, rank, peerRank)) return false;
   int peerRail = comm->peerInfo[peerRank].rail;
   if (peerRail == NCCL_TOPO_UNDEF) return false;
 
@@ -1403,6 +1414,7 @@ static ncclResult_t ncclTopoMaybeOverrideGraphNetForAsymmetricPlacement(struct n
 
   bool smallerSide;
   if (!ncclTopoGetAsymmetricPeerHostPlacement(comm, rank, peerRank, &smallerSide)) return ncclSuccess;
+  if (comm->localRanks > 1 && ncclTopoIsNearBalancedAsymmetricPlacement(comm, rank, peerRank)) return ncclSuccess;
 
   int64_t graphNetId = *id;
   int graphRail = NCCL_TOPO_UNDEF;
@@ -1440,6 +1452,7 @@ static ncclResult_t ncclTopoGetAsymmetricPlacementNetFlags(struct ncclComm* comm
 
   bool smallerSide;
   if (!ncclTopoGetAsymmetricPeerHostPlacement(comm, rank, peerRank, &smallerSide) || !smallerSide) return ncclSuccess;
+  if (comm->localRanks > 1 && ncclTopoIsNearBalancedAsymmetricPlacement(comm, rank, peerRank)) return ncclSuccess;
 
   int64_t localNetId;
   NCCLCHECK(ncclTopoGetLocalNet(comm->topo, rank, channelId, &localNetId, NULL));

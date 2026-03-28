@@ -1408,6 +1408,35 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   comm->topo->nRanks = comm->nRanks;
   // init netGdrLevel
   comm->topo->netGdrLevel = -2;
+  comm->topo->forceNoGdrForUnevenMultiRank = false;
+  {
+    int minHostRanks = nranks;
+    int maxHostRanks = 0;
+    for (int r = 0; r < nranks; r++) {
+      bool firstRankOnHost = true;
+      for (int i = 0; i < r; i++) {
+        if (comm->peerInfo[i].hostHash == comm->peerInfo[r].hostHash) {
+          firstRankOnHost = false;
+          break;
+        }
+      }
+      if (!firstRankOnHost) continue;
+
+      int hostRanks = ncclCommCountHostRanks(comm, comm->peerInfo[r].hostHash);
+      minHostRanks = std::min(minHostRanks, hostRanks);
+      maxHostRanks = std::max(maxHostRanks, hostRanks);
+    }
+    comm->topo->forceNoGdrForUnevenMultiRank =
+      nNodes > 1 &&
+      minHostRanks > 1 &&
+      minHostRanks != maxHostRanks &&
+      maxHostRanks < 2 * minHostRanks;
+    if (comm->topo->forceNoGdrForUnevenMultiRank) {
+      INFO(NCCL_GRAPH|NCCL_NET,
+           "Disabling GDR during graph construction for near-balanced uneven multi-rank communicator placement: minHostRanks=%d maxHostRanks=%d",
+           minHostRanks, maxHostRanks);
+    }
+  }
   // init Pivot A2A related fields
   comm->topo->pivotA2AEnabled = false;
   comm->topo->pivotA2ANumBiRings = 0;
@@ -1515,6 +1544,11 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   if (comm->nvlsSupport) {
     NCCLCHECKGOTO(ncclTopoCompute(comm->topo, nvlsGraph), ret, fail);
     NCCLCHECKGOTO(ncclTopoPrintGraph(comm->topo, nvlsGraph), ret, fail);
+  }
+  if (comm->topo->forceNoGdrForUnevenMultiRank) {
+    comm->topo->forceNoGdrForUnevenMultiRank = false;
+    NCCLCHECKGOTO(ncclTopoComputePaths(comm->topo, comm), ret, fail);
+    NCCLCHECKGOTO(ncclTopoSearchInit(comm->topo), ret, fail);
   }
   timers[TIMER_INIT_GRAPHS] = clockNano() - timers[TIMER_INIT_GRAPHS];
 

@@ -2236,6 +2236,7 @@ static ncclResult_t topoGetAlgoInfo(
   if (!isTunerMatchFound && info->algorithm != NCCL_ALGO_PAT) {
     rcclUpdateCollectiveProtocol(comm, nBytes, info);
   }
+  rcclMaybePreferTreeForSmallSymmetricRdmaAllReduce(comm, nBytes, info);
   rcclSetPipelining(comm, nBytes, info);
   if (simInfo) simInfo->estimatedTime = time;
   TRACE(NCCL_COLL, "%ld Bytes -> Algo %d proto %d time %f", nBytes, info->algorithm, info->protocol, time);
@@ -2877,7 +2878,6 @@ static ncclResult_t p2pTaskAppend(
   // Determine peer and basic parameters.
   ssize_t nBytes = count*ncclTypeSize(datatype);
   bool isSendNotRecv = coll == ncclFuncSend;
-
   // Must be in thread local group before tasks can be alloc'd in `comm->memScoped`.
   ncclGroupCommJoin(comm, ncclGroupTaskTypeCollective);
   info->coll = coll;
@@ -2931,28 +2931,14 @@ static ncclResult_t p2pTaskAppend(
             // shared comms together.
             comm->channels[channelId].peers[peer]->send[1].hasSeen = 1;
             comm->channels[channelId].peers[peer]->send[1].p2pOnly = 1;
-            // comm->connectSend[peer] |= (1UL<<channelId);
             comm->connectSend[peer].masks[channelId/64] |= (1UL<<(channelId%64));
-            ncclGroupCommPreconnect(comm);
-          }
-          if (comm->p2pNet && comm->channels[channelId].peers[peer]->send[NCCL_CONN_IDX_P2P_NET].hasSeen == 0) {
-            comm->channels[channelId].peers[peer]->send[1].hasSeen = 1;
-            //comm->connectSend[peer+comm->nRanks*NCCL_CONN_IDX_P2P_NET] |= (1UL<<channelId);
-            comm->connectSend[peer+comm->nRanks*NCCL_CONN_IDX_P2P_NET].masks[channelId/64] |= (1UL<<(channelId%64));
             ncclGroupCommPreconnect(comm);
           }
         } else {
           if (comm->channels[channelId].peers[peer]->recv[1].hasSeen == 0) { // P2P uses only 1 connector
             comm->channels[channelId].peers[peer]->recv[1].hasSeen = 1;
             comm->channels[channelId].peers[peer]->recv[1].p2pOnly = 1;
-            // comm->connectRecv[peer] |= (1UL<<channelId);
             comm->connectRecv[peer].masks[channelId/64] |= (1UL<<(channelId%64));
-            ncclGroupCommPreconnect(comm);
-          }
-          if (comm->p2pNet && comm->channels[channelId].peers[peer]->recv[NCCL_CONN_IDX_P2P_NET].hasSeen == 0) {
-            comm->channels[channelId].peers[peer]->recv[1].hasSeen = 1;
-            //comm->connectRecv[peer+comm->nRanks*NCCL_CONN_IDX_P2P_NET] |= (1UL<<channelId);
-            comm->connectRecv[peer+comm->nRanks*NCCL_CONN_IDX_P2P_NET].masks[channelId/64] |= (1UL<<(channelId%64));
             ncclGroupCommPreconnect(comm);
           }
         }
